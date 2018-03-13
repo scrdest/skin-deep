@@ -31,7 +31,7 @@ def parse_datasets(files=None, verbose=False, *args, **kwargs):
                 table = pd.read_table(file,
                                      names = (DATA_COLNAME, accession))
             except Exception as E:
-                sys.excepthook(type(E), E.message, sys.exc_traceback)
+                sys.excepthook(*sys.exc_info())
         if verbose: 
             print ('Could not parse {}!'.format(filename) if not any(table) else '{} parsed successfully.'.format(filename))
         yield table
@@ -53,30 +53,47 @@ def parse_miniml(files=None, tags=None, junk_phrases=None, verbose=False, *args,
             root = ET.XML(xml_data)
             all_records = []
             if verbose: verbose = True if 'n' == input('Mute ([Y]/n): ').lower().strip() else False
-            for i, child in enumerate(root):
-                record = {}
-                if not any((tag.lower() in child.tag.lower() for tag in tags)): continue
-                for subchild in child:
-                    subtext = (subchild.text or '').strip()
-                    subtag = subchild.tag
+            
+            def parse_node(xml_node):
+                _verbosity = verbose
+                print("\nPARSING {}\n".format(xml_node))
+                #print(dir(xml_node), '\n\n')
+                #print(xml_node)
+                parsed_records = []
+                for child in xml_node:
+                    print(child)
+                    record = {}
+                    #if not any((tag.lower() in xml_node.tag.lower() for tag in tags)): continue
+                    
+                    # MAKE ME RECURSiVE!
+                    subtext = (child.text or '').strip()
+                    subtag = child.tag
                     for junk in junk_phrases:
                         subtag = subtag.replace(junk, '')
-                    if not all((subtag, subtext)): continue
+                    #if not all((subtag, subtext)): continue
                     record[subtag] = subtext
-                    if verbose:
-                        print (subtext)
+                    if _verbosity or True:
+                        print (child, child.attrib)#dir(child))
                         situation = input('\n[B]reak/[S]ilence/[Continue]: ').strip()
                         print('')
                         if situation == 'B': return list()
-                        if situation == 'S': verbose = False
+                        if situation == 'S': _verbosity = False
                         
-                all_records.append(record)
+                    record.update({child: parse_node(child)})
+                    #print (record)
+                return parsed_records
+            
+            all_records.extend(parse_node(root))
+            
+                
+                
             data.append(pd.DataFrame(all_records))
     return data
 
 # Low-level, intra-dataset cleaning logic.
 def clean_xmls(parsed_input):
     cleaned = (x for x in parsed_input)
+    print(next(cleaned)['Channel'])
     cleaned = (fr.set_index('Accession') for fr in cleaned)
     cleaned = (get_patient_type(fr) for fr in cleaned)
     #cleaned = (fr.transpose() for fr in cleaned)
@@ -87,7 +104,14 @@ def get_patient_type(dframe):
     """Retrieves the label of the sample type from the Title field and returns it as a (new) dataframe."""
     #return dframe['Title']
     #print('TITLE IS: {}'.format(dframe['Title']))
-    return dframe.transform({'Title' : lambda x: x.split('_')[-2]}) # 2 for mag, 1 for mag2
+    result = dframe['Title']
+    try: result = dframe.transform({'Title' : lambda x: x.split('_')[-2]}) # 2 for mag, 1 for mag2
+    except IndexError as IE: 
+        print('Could not split the title!', file=sys.stderr)
+        result = result.rename_axis('Title')
+    except Exception: 
+        sys.excepthook(*sys.exc_info())
+    return result
 
 def clean_data(raw_data):
     for datum in raw_data:
@@ -114,6 +138,7 @@ def combo_pipeline(xml_path=None, txt_path=None, verbose=False, *args, **kwargs)
 
     for xml in xmls:
         sample_groups = xml.groupby('Title').groups
+        print(xml)
         types = set(sample_groups.keys())
         pos = 0
         while types:
