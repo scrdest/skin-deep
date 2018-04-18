@@ -38,6 +38,7 @@ def parse_datasets(files=None, verbose=False, *args, **kwargs):
 
 
 def parse_miniml(files=None, tags=None, junk_phrases=None, verbose=False, *args, **kwargs):
+    from pprint import pprint as pprint
     if tags is None: tags = {'sample'}
     if junk_phrases is None: junk_phrases = {'{http://www.ncbi.nlm.nih.gov/geo/info/MINiML}',}
     files = glob.glob(files) if files else files
@@ -54,14 +55,13 @@ def parse_miniml(files=None, tags=None, junk_phrases=None, verbose=False, *args,
             all_records = []
             if verbose: verbose = True if 'n' == input('Mute ([Y]/n): ').lower().strip() else False
             
-            def parse_node(xml_node):
-                _verbosity = verbose
-                print("\nPARSING {}\n".format(xml_node))
+            def parse_node(xml_node, verbosity=True):
+                verbosity = verbose if verbosity is None else verbosity
+                if verbosity: print("\nPARSING {}\n".format(xml_node))
                 #print(dir(xml_node), '\n\n')
                 #print(xml_node)
                 parsed_records = []
                 for child in xml_node:
-                    print(child)
                     record = {}
                     #if not any((tag.lower() in xml_node.tag.lower() for tag in tags)): continue
                     
@@ -71,29 +71,49 @@ def parse_miniml(files=None, tags=None, junk_phrases=None, verbose=False, *args,
                     for junk in junk_phrases:
                         subtag = subtag.replace(junk, '')
                     #if not all((subtag, subtext)): continue
-                    record[subtag] = subtext
-                    if _verbosity or True:
-                        print (child, child.attrib)#dir(child))
+                    if subtext: 
+                        for junk in junk_phrases:
+                            subtext = subtext.replace(junk, '')
+                        record[subtag] = subtext
+                    if verbosity:
+                        print("\nSubtag: {}\nSubtext: {}\n".format(subtag, subtext))
                         situation = input('\n[B]reak/[S]ilence/[Continue]: ').strip()
                         print('')
                         if situation == 'B': return list()
-                        if situation == 'S': _verbosity = False
+                        if situation == 'S': verbosity = False
                         
-                    record.update({child: parse_node(child)})
-                    #print (record)
+                    record.update({subtag: (subtext or parse_node(child, verbosity))})
+                    record = {k:v for (k,v) in record.items() if len(v)}
+                    if record:
+                        if verbosity:
+                            print('')
+                            pprint (record)
+                            print('')
+                        parsed_records.append(record)
+                else: 
+                    if verbosity:
+                        print("\nAll children of {} found.".format(xml_node))
+                        if parsed_records: print(parsed_records)
+                dictifier = dict()
+                for d in parsed_records: dictifier.update(d)
+                else: 
+                    parsed_records = pd.Series(dictifier)
                 return parsed_records
             
-            all_records.extend(parse_node(root))
-            
-                
-                
-            data.append(pd.DataFrame(all_records))
+            parsed = parse_node(root)
+            #raise Exception("PARSED:\n {}".format(parsed))
+            all_records.extend(parsed.values)
+            #print("\n\nALL RECORDS:\n")            
+            all_records = pd.DataFrame(all_records)
+            #all_records.set_index(0, inplace=True)
+            #print(all_records)
+            data.append(all_records)
     return data
 
 # Low-level, intra-dataset cleaning logic.
 def clean_xmls(parsed_input):
     cleaned = (x for x in parsed_input)
-    print(next(cleaned)['Channel'])
+    print(next(cleaned))
     cleaned = (fr.set_index('Accession') for fr in cleaned)
     cleaned = (get_patient_type(fr) for fr in cleaned)
     #cleaned = (fr.transpose() for fr in cleaned)
